@@ -31,7 +31,7 @@ class ApiService {
     }
   }
 
-  // Upload document (company-aware)
+// Upload document (company-aware)
   static Future<Map<String, dynamic>> uploadDocument(
       File file, String userId) async {
     try {
@@ -44,13 +44,17 @@ class ApiService {
 
       var response = await request.send();
       var responseBody = await response.stream.bytesToString();
+      var decodedBody = json.decode(responseBody);
 
       return {
         'success': response.statusCode == 200,
-        'data': json.decode(responseBody),
+        'status_code': response.statusCode, // ← NEW
+        'data': decodedBody,
+        'error':
+            response.statusCode != 200 ? decodedBody['detail'] : null, // ← NEW
       };
     } catch (e) {
-      return {'success': false, 'error': e.toString()};
+      return {'success': false, 'status_code': null, 'error': e.toString()};
     }
   }
 
@@ -156,11 +160,29 @@ class ApiService {
   }
 
   // Get all documents (company-aware)
-  static Future<Map<String, dynamic>> getDocuments() async {
+  static Future<Map<String, dynamic>> getDocuments({
+    int limit = 50, // ← ADD THIS with default value
+    int offset = 0,
+    String? status,
+  }) async {
     try {
-      // Use company-scoped endpoint
+      // Build query parameters
+      final queryParams = {
+        'limit': limit.toString(),
+        'offset': offset.toString(),
+      };
+
+      if (status != null) {
+        queryParams['status'] = status;
+      }
+
+      // Use company-scoped endpoint with query parameters
+      final uri =
+          Uri.parse('$baseUrl/api/v1/companies/$currentCompanyId/documents')
+              .replace(queryParameters: queryParams);
+
       final response = await http.get(
-        Uri.parse('$baseUrl/api/v1/companies/$currentCompanyId/documents'),
+        uri,
         headers: {'Content-Type': 'application/json'},
       );
 
@@ -261,9 +283,7 @@ class ApiService {
       return {
         'success': true,
         'data': [
-          // {'id': 1, 'name': 'Test Company'},
-          // {'id': 2, 'name': 'Second Company'},
-          {'id': 3, 'name': 'Estia Health'}, // ← Changed from 'Demo Company'
+          {'id': 3, 'name': 'M&A Advisory Partners'}, // ← NEW
         ],
       };
     } catch (e) {
@@ -350,23 +370,43 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> calculateValuation({
-    required int companyId, // ADDED: Make companyId a parameter
+    required int companyId,
+    required int documentId,
+    required String targetName,
     required List<double> comparableMultiples,
     required int fiscalYear,
     String model = 'mixtral-8x7b',
   }) async {
     try {
+      final url = Uri.parse('$baseUrl/api/v1/valuations/calculate');
+      final body = jsonEncode({
+        'company_id': companyId,
+        'document_id': documentId,
+        'target_name': targetName,
+        'comparable_multiples': comparableMultiples,
+        'fiscal_year': fiscalYear,
+        'model': model,
+        'include_narrative': true,
+      });
+
+      print('🔍 Valuation URL: $url');
+      print('🔍 Request body: $body');
+      print('🔍 Headers: ${{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json', // ← Try adding this
+      }}');
+
       final response = await http.post(
-        Uri.parse('$baseUrl/api/v1/valuations/calculate'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'company_id': companyId,
-          'comparable_multiples': comparableMultiples,
-          'fiscal_year': fiscalYear,
-          'model': model,
-          'include_narrative': true,
-        }),
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json', // ← ADD THIS
+        },
+        body: body,
       );
+
+      print('🔍 Response status: ${response.statusCode}');
+      print('🔍 Response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -377,10 +417,11 @@ class ApiService {
       } else {
         return {
           'success': false,
-          'message': 'Server error: ${response.statusCode}',
+          'message': 'Server error: ${response.statusCode} - ${response.body}',
         };
       }
     } catch (e) {
+      print('🔍 Exception: $e');
       return {
         'success': false,
         'message': 'Network error: $e',
@@ -410,6 +451,34 @@ class ApiService {
       return {
         'success': false,
         'message': 'Network error: $e',
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> getDocumentFiscalYear(
+      int documentId) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+            '$baseUrl/api/v1/valuations/document-fiscal-year/$documentId'),
+        headers: _getHeaders(),
+      );
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'data': jsonDecode(response.body),
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Failed to fetch fiscal year',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
       };
     }
   }

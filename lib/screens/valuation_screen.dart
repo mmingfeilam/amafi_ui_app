@@ -10,27 +10,34 @@ class _ValuationScreenState extends State<ValuationScreen> {
   bool isLoading = false;
   Map<String, dynamic>? valuationResult;
   String? errorMessage;
-  String selectedModel = 'mixtral-8x7b'; // Default to recommended model
-  String companyName = 'Loading...'; // Will be fetched
+  String selectedModel = 'mixtral-8x7b';
+  String companyName = 'Loading...';
 
-  // Default comparable multiples for testing
+  // Document selection
+  int? selectedDocumentId;
+  String? selectedDocumentName;
+  List<dynamic> availableDocuments = [];
+  bool isLoadingDocuments = true;
+
+  // Fiscal year auto-detection
+  int? selectedFiscalYear;
+  bool isLoadingFiscalYear = false;
+
   final List<double> comparableMultiples = [7.5, 8.2, 7.0, 8.8, 7.8];
-  final int fiscalYear = 2023;
 
   @override
   void initState() {
     super.initState();
     _loadCompanyName();
+    _loadDocuments();
   }
 
   Future<void> _loadCompanyName() async {
     try {
-      // Get company name from your API or use the company dropdown selection
-      // For now, using a hardcoded map - you can replace with actual API call
       final companyNames = {
         1: 'Test Company',
         2: 'Second Company',
-        3: 'Estia Health',
+        3: 'M&A Advisory Partners',
       };
 
       setState(() {
@@ -44,7 +51,55 @@ class _ValuationScreenState extends State<ValuationScreen> {
     }
   }
 
-  // Model configurations matching your backend
+  Future<void> _loadDocuments() async {
+    try {
+      final result = await ApiService.getDocuments(limit: 50);
+      if (result['success']) {
+        final docs = result['data']['documents'] ?? [];
+        setState(() {
+          availableDocuments = docs;
+          isLoadingDocuments = false;
+          // Auto-select first document if available
+          if (docs.isNotEmpty) {
+            selectedDocumentId = docs[0]['id'];
+            selectedDocumentName = docs[0]['original_filename'];
+            // Load fiscal year for first document
+            _loadFiscalYearForDocument(docs[0]['id']);
+          }
+        });
+      }
+    } catch (e) {
+      print('Error loading documents: $e');
+      setState(() {
+        isLoadingDocuments = false;
+      });
+    }
+  }
+
+  Future<void> _loadFiscalYearForDocument(int documentId) async {
+    setState(() {
+      isLoadingFiscalYear = true;
+    });
+
+    try {
+      final result = await ApiService.getDocumentFiscalYear(documentId);
+
+      if (result['success'] && mounted) {
+        final defaultYear = result['data']['default_year'];
+        setState(() {
+          selectedFiscalYear = defaultYear ?? 2024; // Fallback to 2024
+          isLoadingFiscalYear = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading fiscal year: $e');
+      setState(() {
+        selectedFiscalYear = 2024; // Fallback
+        isLoadingFiscalYear = false;
+      });
+    }
+  }
+
   final Map<String, Map<String, dynamic>> models = {
     'mistral-7b': {
       'name': 'Quick',
@@ -78,6 +133,26 @@ class _ValuationScreenState extends State<ValuationScreen> {
   };
 
   Future<void> _calculateValuation() async {
+    if (selectedDocumentId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Please select a target company document first'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (selectedFiscalYear == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Fiscal year not detected. Please try again.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       isLoading = true;
       errorMessage = null;
@@ -85,11 +160,19 @@ class _ValuationScreenState extends State<ValuationScreen> {
     });
 
     try {
+      // Extract target name from filename
+      String targetName = (selectedDocumentName ?? '')
+          .replaceAll(' valuation.pdf', '')
+          .replaceAll(' Valuation IER.pdf', '')
+          .replaceAll('.pdf', '');
+
       final result = await ApiService.calculateValuation(
-        companyId: 3, // Replace with actual company ID if needed
+        companyId: ApiService.getCurrentCompany(),
+        documentId: selectedDocumentId!,
+        targetName: targetName,
         comparableMultiples: comparableMultiples,
-        fiscalYear: fiscalYear,
-        model: selectedModel, // Pass selected model
+        fiscalYear: selectedFiscalYear!,
+        model: selectedModel,
       );
 
       if (result['success']) {
@@ -119,7 +202,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
             Text(
               'Company Valuation',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
@@ -134,7 +216,172 @@ class _ValuationScreenState extends State<ValuationScreen> {
             ),
             SizedBox(height: 24),
 
-            // Model Selection Section
+            // Target Company Selector
+            Card(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.business, color: Color(0xFF1E3A8A)),
+                        SizedBox(width: 8),
+                        Text(
+                          'Select Target Company',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 12),
+                    if (isLoadingDocuments)
+                      Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: CircularProgressIndicator(),
+                        ),
+                      )
+                    else if (availableDocuments.isEmpty)
+                      Container(
+                        padding: EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.orange[50],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning, color: Colors.orange),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'No documents available. Upload a valuation document first.',
+                                style: TextStyle(color: Colors.orange[900]),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Container(
+                        width: double.infinity,
+                        child: DropdownButtonFormField<int>(
+                          value: selectedDocumentId,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
+                          ),
+                          hint: Text('Choose a company to value'),
+                          items: availableDocuments
+                              .map<DropdownMenuItem<int>>((doc) {
+                            String filename =
+                                doc['original_filename'] ?? 'Unknown';
+                            String displayName = filename
+                                .replaceAll(' valuation.pdf', '')
+                                .replaceAll(' Valuation IER.pdf', '')
+                                .replaceAll('.pdf', '');
+
+                            return DropdownMenuItem<int>(
+                              value: doc['id'],
+                              child: Row(
+                                children: [
+                                  Icon(Icons.description,
+                                      size: 16, color: Colors.grey[600]),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      displayName,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w500,
+                                        fontSize: 14,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) async {
+                            setState(() {
+                              selectedDocumentId = value;
+                              final doc = availableDocuments.firstWhere(
+                                (d) => d['id'] == value,
+                                orElse: () => null,
+                              );
+                              selectedDocumentName = doc?['original_filename'];
+                            });
+
+                            // Auto-detect fiscal year for selected document
+                            if (value != null) {
+                              await _loadFiscalYearForDocument(value);
+                            }
+                          },
+                        ),
+                      ),
+
+                    // Show fiscal year info below dropdown
+                    if (selectedDocumentId != null &&
+                        !isLoadingFiscalYear &&
+                        selectedFiscalYear != null) ...[
+                      SizedBox(height: 12),
+                      Container(
+                        padding: EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.green[50],
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.green[200]!),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.calendar_today,
+                                size: 16, color: Colors.green[700]),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Using FY $selectedFiscalYear data • ${availableDocuments.firstWhere((d) => d['id'] == selectedDocumentId)['chunk_count']} records',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.green[900],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    if (isLoadingFiscalYear) ...[
+                      SizedBox(height: 12),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Detecting fiscal year...',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: 16),
+
             Text(
               'Analysis Quality',
               style: TextStyle(
@@ -184,7 +431,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
                     padding: const EdgeInsets.all(14),
                     child: Row(
                       children: [
-                        // Icon
                         Container(
                           width: 44,
                           height: 44,
@@ -199,8 +445,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
                           ),
                         ),
                         const SizedBox(width: 12),
-
-                        // Details
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -267,8 +511,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
                             ],
                           ),
                         ),
-
-                        // Selection indicator
                         Icon(
                           isSelected
                               ? Icons.check_circle
@@ -283,7 +525,7 @@ class _ValuationScreenState extends State<ValuationScreen> {
                   ),
                 ),
               );
-            }).toList(),
+            }),
 
             SizedBox(height: 20),
 
@@ -291,7 +533,11 @@ class _ValuationScreenState extends State<ValuationScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: isLoading ? null : _calculateValuation,
+                onPressed: (isLoading ||
+                        selectedDocumentId == null ||
+                        selectedFiscalYear == null)
+                    ? null
+                    : _calculateValuation,
                 icon: isLoading
                     ? SizedBox(
                         width: 20,
@@ -379,7 +625,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Model Info Banner
         if (modelUsed != null)
           Container(
             padding: EdgeInsets.all(12),
@@ -414,8 +659,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
             ),
           ),
         if (modelUsed != null) SizedBox(height: 16),
-
-        // Valuation Range Card
         Card(
           child: Padding(
             padding: EdgeInsets.all(16),
@@ -457,10 +700,7 @@ class _ValuationScreenState extends State<ValuationScreen> {
             ),
           ),
         ),
-
         SizedBox(height: 16),
-
-        // Comparable Stats Card
         Card(
           child: Padding(
             padding: EdgeInsets.all(16),
@@ -486,10 +726,7 @@ class _ValuationScreenState extends State<ValuationScreen> {
             ),
           ),
         ),
-
         SizedBox(height: 16),
-
-        // AI Analysis Card
         Card(
           child: Padding(
             padding: EdgeInsets.all(16),
@@ -525,7 +762,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
   Widget _buildValuePill(
       String label, String value, String multiple, Color color) {
     return Expanded(
-      // Changed from Column to Expanded wrapper
       child: Column(
         children: [
           Text(
@@ -538,8 +774,7 @@ class _ValuationScreenState extends State<ValuationScreen> {
           ),
           SizedBox(height: 8),
           Container(
-            padding: EdgeInsets.symmetric(
-                horizontal: 12, vertical: 12), // Reduced horizontal padding
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
               color: color.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
@@ -548,7 +783,6 @@ class _ValuationScreenState extends State<ValuationScreen> {
             child: Column(
               children: [
                 FittedBox(
-                  // Added FittedBox to scale text if needed
                   fit: BoxFit.scaleDown,
                   child: Text(
                     value,
