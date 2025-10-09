@@ -321,7 +321,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     print('Filename field: ${doc['filename']}');
     print('Keys available: ${doc.keys.toList()}');
 
-    final displayName = doc['filename'] ?? 'Unknown File';
+    final displayName =
+        doc['original_filename'] ?? doc['filename'] ?? 'Unknown File';
     print('Display name: $displayName');
 
     return Card(
@@ -336,7 +337,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    doc['filename'] ?? 'Unknown File',
+                    doc['original_filename'] ??
+                        doc['filename'] ??
+                        'Unknown File',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
@@ -687,7 +690,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildDetailRow('ID', '${doc['id']}'),
-                _buildDetailRow('Filename', doc['filename'] ?? 'Unknown'),
+                _buildDetailRow('Filename',
+                    doc['original_filename'] ?? doc['filename'] ?? 'Unknown'),
                 _buildDetailRow('User ID', doc['user_id'] ?? 'Unknown'),
                 _buildDetailRow('File Size', _formatFileSize(doc['file_size'])),
                 _buildDetailRow(

@@ -7,7 +7,7 @@ class ApiService {
   // static const String baseUrl = 'http://192.168.1.22:8000';
 
   // Default company ID - can be changed by user
-  static int currentCompanyId = 1;
+  static int currentCompanyId = 3;
 
   // Company management
   static void setCompany(int companyId) {
@@ -158,14 +158,28 @@ class ApiService {
   // Get all documents (company-aware)
   static Future<Map<String, dynamic>> getDocuments() async {
     try {
+      // Use company-scoped endpoint
       final response = await http.get(
-          Uri.parse('$baseUrl/api/v1/companies/$currentCompanyId/documents'));
-      return {
-        'success': response.statusCode == 200,
-        'data': json.decode(response.body),
-      };
+        Uri.parse('$baseUrl/api/v1/companies/$currentCompanyId/documents'),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'data': json.decode(response.body),
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Failed to load documents',
+        };
+      }
     } catch (e) {
-      return {'success': false, 'error': e.toString()};
+      return {
+        'success': false,
+        'error': e.toString(),
+      };
     }
   }
 
@@ -215,29 +229,41 @@ class ApiService {
   // Delete document (keeping original endpoint for now)
   static Future<Map<String, dynamic>> deleteDocument(int documentId) async {
     try {
+      // Use company-scoped endpoint
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/v1/documents/$documentId'),
+        Uri.parse(
+            '$baseUrl/api/v1/companies/$currentCompanyId/documents/$documentId'),
+        headers: {'Content-Type': 'application/json'},
       );
-      return {
-        'success': response.statusCode == 200,
-        'data': response.statusCode == 200 ? json.decode(response.body) : null,
-      };
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'data': json.decode(response.body),
+        };
+      } else {
+        return {
+          'success': false,
+          'error': 'Server error: ${response.statusCode}',
+        };
+      }
     } catch (e) {
-      return {'success': false, 'error': e.toString()};
+      return {
+        'success': false,
+        'error': e.toString(),
+      };
     }
   }
 
   // Get available companies (for dropdown)
   static Future<Map<String, dynamic>> getCompanies() async {
     try {
-      // For now, return hardcoded companies
-      // Later you could add a backend endpoint for this
       return {
         'success': true,
         'data': [
-          {'id': 1, 'name': 'Test Company'},
-          {'id': 2, 'name': 'Second Company'},
-          {'id': 3, 'name': 'Demo Company'},
+          // {'id': 1, 'name': 'Test Company'},
+          // {'id': 2, 'name': 'Second Company'},
+          {'id': 3, 'name': 'Estia Health'}, // ← Changed from 'Demo Company'
         ],
       };
     } catch (e) {
@@ -254,22 +280,31 @@ class ApiService {
     };
   }
 
-  // Add this method to api_service.dart
   static Future<Map<String, dynamic>> getDocumentStatus(
       String documentId) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/companies/1/documents/$documentId/status'),
+        Uri.parse(
+            '$baseUrl/api/v1/companies/$currentCompanyId/documents/$documentId/status'), // ← FIXED!
         headers: _getHeaders(),
       );
 
       if (response.statusCode == 200) {
-        return json.decode(response.body);
+        return {
+          'success': true,
+          'data': json.decode(response.body),
+        };
       } else {
-        throw Exception('Failed to get document status');
+        return {
+          'success': false,
+          'error': 'Status check failed: ${response.statusCode}',
+        };
       }
     } catch (e) {
-      throw Exception('Status check error: $e');
+      return {
+        'success': false,
+        'error': 'Status check error: $e',
+      };
     }
   }
 
@@ -312,5 +347,70 @@ class ApiService {
   static bool isValidSearchConfiguration(bool useHybrid, bool useReranking) {
     // All combinations are valid
     return true;
+  }
+
+  static Future<Map<String, dynamic>> calculateValuation({
+    required int companyId, // ADDED: Make companyId a parameter
+    required List<double> comparableMultiples,
+    required int fiscalYear,
+    String model = 'mixtral-8x7b',
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/v1/valuations/calculate'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'company_id': companyId,
+          'comparable_multiples': comparableMultiples,
+          'fiscal_year': fiscalYear,
+          'model': model,
+          'include_narrative': true,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return {
+          'success': true,
+          'data': data,
+        };
+      } else {
+        return {
+          'success': false,
+          'message': 'Server error: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+      };
+    }
+  }
+
+  // Optional: Add method to get available models from backend
+  static Future<Map<String, dynamic>> getAvailableModels() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/v1/valuations/models'),
+      );
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'data': jsonDecode(response.body),
+        };
+      } else {
+        return {
+          'success': false,
+          'message': 'Failed to fetch models',
+        };
+      }
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+      };
+    }
   }
 }
