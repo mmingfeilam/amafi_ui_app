@@ -3,6 +3,7 @@ import 'upload_screen.dart';
 import 'search_screen.dart';
 import 'history_screen.dart';
 import '../services/api_service.dart';
+import 'valuation_screen.dart';
 
 // Company model
 class Company {
@@ -63,7 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       // Set initial selected company
       selectedCompany = companies.firstWhere(
-        (company) => company.isSelected,
+        (company) => company.id == 3,
         orElse: () => companies.first,
       );
 
@@ -76,6 +77,7 @@ class _HomeScreenState extends State<HomeScreen> {
         UploadScreen(),
         SearchScreen(),
         HistoryScreen(),
+        ValuationScreen(),
       ];
 
       setState(() {
@@ -213,6 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.folder),
             label: 'Documents',
           ),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.assessment), label: 'Valuation'),
         ],
       ),
     );
