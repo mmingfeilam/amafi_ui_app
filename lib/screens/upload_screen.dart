@@ -18,22 +18,64 @@ class _UploadScreenState extends State<UploadScreen> {
   FileInfo? _selectedFileInfo;
   bool _isUploading = false;
   bool _isProcessing = false;
+  bool _hasProcessingDocuments = false; // NEW: Track if any doc is processing
   String? _uploadResult;
   double _uploadProgress = 0.0;
 
   // Status polling
   Timer? _statusTimer;
+  Timer? _processingCheckTimer; // NEW: Timer for checking processing status
   String? _currentDocumentId;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkForProcessingDocuments();
+    // Poll every 3 seconds to check if other documents are processing
+    _processingCheckTimer = Timer.periodic(Duration(seconds: 3), (_) {
+      _checkForProcessingDocuments();
+    });
+  }
 
   @override
   void dispose() {
     _statusTimer?.cancel();
+    _processingCheckTimer?.cancel(); // NEW: Cancel processing check timer
     _userIdController.dispose();
     super.dispose();
   }
 
+  // NEW: Check if any documents are currently processing
+  Future<void> _checkForProcessingDocuments() async {
+    try {
+      final response = await ApiService.getDocuments(limit: 10);
+      if (response['success']) {
+        final docs = response['data']['documents'] as List;
+        final hasProcessing =
+            docs.any((doc) => doc['processing_status'] == 'processing');
+
+        if (mounted) {
+          setState(() {
+            _hasProcessingDocuments = hasProcessing;
+          });
+
+          // ← ADD THIS: Stop polling if no processing documents
+          if (!hasProcessing && _processingCheckTimer != null) {
+            _processingCheckTimer?.cancel();
+            _processingCheckTimer = null;
+          }
+        }
+      }
+    } catch (e) {
+      print('Error checking processing status: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // NEW: Button is disabled if uploading OR if another doc is processing
+    final isButtonDisabled = _isUploading || _hasProcessingDocuments;
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(16),
       child: Column(
@@ -153,6 +195,42 @@ class _UploadScreenState extends State<UploadScreen> {
 
                   SizedBox(height: 16),
 
+                  // NEW: Warning box when another document is processing
+                  if (_hasProcessingDocuments && !_isUploading) ...[
+                    Container(
+                      padding: EdgeInsets.all(12),
+                      margin: EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange[200]!),
+                      ),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.orange),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Another document is being processed. Please wait before uploading.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.orange[900],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   // Upload Progress
                   if (_isUploading) ...[
                     LinearProgressIndicator(
@@ -220,11 +298,11 @@ class _UploadScreenState extends State<UploadScreen> {
                     SizedBox(height: 16),
                   ],
 
-                  // Upload Button
+                  // Upload Button - MODIFIED
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: _selectedFile != null && !_isUploading
+                      onPressed: _selectedFile != null && !isButtonDisabled
                           ? _uploadFile
                           : null,
                       icon: _isUploading
@@ -237,8 +315,11 @@ class _UploadScreenState extends State<UploadScreen> {
                               ),
                             )
                           : Icon(Icons.upload),
-                      label:
-                          Text(_isUploading ? 'Uploading...' : 'Upload Manual'),
+                      label: Text(_isUploading
+                          ? 'Uploading...'
+                          : _hasProcessingDocuments
+                              ? 'Processing...'
+                              : 'Upload Manual'),
                       style: ElevatedButton.styleFrom(
                         padding: EdgeInsets.symmetric(vertical: 16),
                       ),
@@ -434,39 +515,64 @@ class _UploadScreenState extends State<UploadScreen> {
       _isProcessing = true;
     });
 
+    // ← NEW: Restart the processing check timer
+    _processingCheckTimer?.cancel();
+    _processingCheckTimer = Timer.periodic(Duration(seconds: 3), (_) {
+      _checkForProcessingDocuments();
+    });
+
     _statusTimer = Timer.periodic(Duration(seconds: 5), (timer) async {
       try {
         final status = await ApiService.getDocumentStatus(documentId);
 
-        if (status['processing_status'] == 'completed') {
-          setState(() {
-            _isProcessing = false;
-            _uploadResult = 'Processing complete! Document is now searchable.\n'
-                'Chunks created: ${status['chunk_count']}\n'
-                'Quality score: ${(status['text_quality_score'] ?? 0.0).toStringAsFixed(2)}';
-          });
-          timer.cancel();
+        if (status['success']) {
+          final statusData = status['data'];
 
-          // Show completion notification
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Document processing completed! Ready for search.'),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 4),
-            ),
-          );
-        } else if (status['processing_status'] == 'failed') {
-          setState(() {
-            _isProcessing = false;
-            _uploadResult = 'Processing failed. Please try uploading again.';
-          });
-          timer.cancel();
+          if (statusData['processing_status'] == 'completed') {
+            setState(() {
+              _isProcessing = false;
+              _uploadResult =
+                  'Processing complete! Document is now searchable.\n'
+                  'Chunks created: ${statusData['chunk_count']}\n'
+                  'Quality score: ${(statusData['text_quality_score'] ?? 0.0).toStringAsFixed(2)}';
+            });
+            timer.cancel();
+
+            // ← NEW: Also cancel the processing check timer
+            _processingCheckTimer?.cancel();
+            _processingCheckTimer = null;
+
+            // Show completion notification
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content:
+                    Text('Document processing completed! Ready for search.'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 4),
+              ),
+            );
+          } else if (statusData['processing_status'] == 'failed') {
+            setState(() {
+              _isProcessing = false;
+              _uploadResult = 'Processing failed. Please try uploading again.';
+            });
+            timer.cancel();
+
+            // ← NEW: Also cancel the processing check timer
+            _processingCheckTimer?.cancel();
+            _processingCheckTimer = null;
+          }
+          // If still processing, keep polling
         }
-        // If still processing, keep polling
       } catch (e) {
         // If error checking status, stop polling but don't show error
         // (processing might still be happening)
         timer.cancel();
+
+        // ← NEW: Also cancel the processing check timer on error
+        _processingCheckTimer?.cancel();
+        _processingCheckTimer = null;
+
         setState(() {
           _isProcessing = false;
         });
@@ -540,7 +646,6 @@ class _UploadScreenState extends State<UploadScreen> {
               label: 'View Documents',
               textColor: Colors.white,
               onPressed: () {
-                // Navigate to documents tab - you'll need to implement tab switching
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Go to Documents tab to view uploaded files'),
